@@ -1,0 +1,190 @@
+---
+title: "Contig Assemblies (hifiasm)"
+description: "Contig-level quality across six dogs (primary, hap1, hap2)"
+format:
+  html:
+    toc: true
+    code-fold: show
+    df-print: paged
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## What this chapter shows
+
+We summarize **contig-level** assemblies produced by **hifiasm** (primary, hap1, hap2). We report N50/L50-style contiguity and total size, then visualize cross-dog differences. N50 is a weighted median contig length such that **50% of the assembly** is in contigs ≥ N50; NG50 is the same concept but uses an **expected genome size** as the denominator (useful for between-assembly comparisons).
+
+> Notes  
+> - Domestic dog (Canis familiaris) nuclear genome is ~**2.4–2.5 Gb**; we use 2.45 Gb as a default expected size for NG-metrics.
+> - hifiasm generates **primary** and **haplotype-resolved** contigs (hap1, hap2) from HiFi data, enabling direct comparison of maternal/paternal assemblies.
+
+::: callout-tip
+We keep scaffolding (RagTag) and annotation (Liftoff) in later chapters so this section reflects **raw contiguity** from hifiasm.
+:::
+
+## Summary Table
+
+These come from your linking script (`data/*_{hap1|hap2|primary}.stats.tsv`) and contain: `num`, `sum`, `n50`, `max`, `mean`.
+
+```{python}
+import pandas as pd
+
+asm = pd.read_csv("data/assemblies.tsv", sep="\t")
+# Human-friendly labels
+label_map = {"p_ctg":"primary", "hap1.p_ctg":"hap1", "hap2.p_ctg":"hap2"}
+asm["assembly"] = asm["assembly"].map(label_map).fillna(asm["assembly"])
+
+# Normalize dog names (lowercase → Title)
+asm["dog"] = asm["dog"].str.title()
+
+# Order columns
+asm = asm[["dog","assembly","contigs","length_bp","n50_bp","max_bp","mean_bp"]]
+asm.sort_values(["dog","assembly"], inplace=True)
+asm
+
+asm_summary = (asm
+  .assign(length_Gb=lambda d: d["length_bp"]/1e9,
+          n50_Mb=lambda d: d["n50_bp"]/1e6,
+          max_Mb=lambda d: d["max_bp"]/1e6,
+          mean_kb=lambda d: d["mean_bp"]/1e3)
+  [["dog","assembly","contigs","length_Gb","n50_Mb","max_Mb","mean_kb"]]
+  .rename(columns={"length_Gb":"length (Gb)","n50_Mb":"N50 (Mb)","max_Mb":"max (Mb)","mean_kb":"mean (kb)"}))
+asm_summary
+
+```
+## Headline continuity plots 
+```{python}
+import matplotlib.pyplot as plt
+import numpy as np
+
+wanted = ["primary","hap1","hap2"]  
+# ---- Bar plot of N50 ----
+fig, ax = plt.subplots(figsize=(8,4))
+pivot_n50 = (asm
+    .pivot(index="dog", columns="assembly", values="n50_bp")
+    .reindex(sorted(asm["dog"].unique()))
+    .reindex(columns=wanted) 
+)
+x = np.arange(len(pivot_n50))
+w = 0.27
+for i, col in enumerate(pivot_n50.columns):
+    ax.bar(x + i*w, pivot_n50[col]/1e6, width=w, label=col)
+ax.set_xticks(x + w)
+ax.set_xticklabels(pivot_n50.index, rotation=0)
+ax.set_ylabel("N50 (Mb)")
+ax.set_title("Contig N50 by dog and haplotype")
+ax.legend()
+plt.tight_layout()
+plt.show()
+
+# ---- Total assembled size vs expected dog genome size ----
+expected_bp = 2.45e9  # Canis familiaris ~2.4–2.5 Gb
+fig, ax = plt.subplots(figsize=(8,4))
+pivot_sum = (asm
+    .pivot(index="dog", columns="assembly", values="length_bp")
+    .reindex(sorted(asm["dog"].unique()))
+    .reindex(columns=wanted)  
+)
+x = np.arange(len(pivot_sum)); w = 0.27
+for i, col in enumerate(pivot_sum.columns):
+    ax.bar(x + i*w, pivot_sum[col]/1e9, width=w, label=col)
+ax.axhline(expected_bp/1e9, linestyle="--")
+ax.set_xticks(x + w); ax.set_xticklabels(pivot_sum.index)
+ax.set_ylabel("Assembly length (Gb)")
+ax.set_title("Total contig length vs expected dog genome size (~2.45 Gb)")
+ax.legend()
+plt.tight_layout()
+plt.show()
+
+# ---- Cumulative-length (lens) plots ----
+import glob, re, math
+
+def load_lens(path):
+    s = pd.read_csv(path, sep=r"\s+", header=None, names=["len"])
+    s = s.sort_values("len", ascending=False).reset_index(drop=True)
+    s["cum"] = s["len"].cumsum()
+    return s
+
+lens_files = sorted(glob.glob("data/*_primary.fa.lens") + glob.glob("data/*_hap1.fa.lens") + glob.glob("data/*_hap2.fa.lens"))
+if lens_files:
+    ncols = 3
+    nrows = math.ceil(len(lens_files)/ncols)
+    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(12, 3*nrows), squeeze=False)
+    for ax, f in zip(axes.flatten(), lens_files):
+        m = re.match(r"data/([a-zA-Z0-9_-]+)_(primary|hap1|hap2)\.fa\.lens", f)
+        if not m:  
+            ax.axis("off"); ax.set_title(f"Unrecognized: {f}")
+            continue
+        dog, hap = m.group(1).title(), m.group(2)
+        df = load_lens(f)
+        total = df["len"].sum()
+        ax.plot(range(1, len(df)+1), df["cum"]/1e9)
+        ax.axhline(total*0.5/1e9, linestyle="--")
+        ax.set_title(f"{dog} {hap}")
+        ax.set_xlabel("# contigs (sorted)"); ax.set_ylabel("Cumulative length (Gb)")
+    plt.tight_layout(); plt.show()
+```
+
+## Nx curves and area-under-Nx (auN)
+
+```{python}
+# --- Nx curves split into two panels -------------------------------------
+import glob, re, pandas as pd, matplotlib.pyplot as plt, numpy as np
+
+def load_lengths(path):
+    s = pd.read_csv(path, sep=r"\s+", header=None, names=["len"])
+    return s["len"].sort_values(ascending=False).to_numpy()
+
+def nx_curve(lengths):
+    cs  = lengths.cumsum()
+    tot = cs[-1]
+    nx_vals = [lengths[cs >= tot*(x/100)][0] for x in range(1,101)]
+    return np.arange(1,101), np.array(nx_vals)
+
+def auN(nx_vals):          # area-under-Nx curve
+    return nx_vals.sum() / 100
+
+# collect curves
+lens_files = sorted(glob.glob("data/*_primary.fa.lens") + glob.glob("data/*_hap1.fa.lens") + glob.glob("data/*_hap2.fa.lens"))
+curves, summary = [], []
+for f in lens_files:
+    m = re.match(r".*/([A-Za-z]+)_(primary|hap1|hap2)\.fa\.lens", f)
+    if not m:
+        continue
+    dog, asm = m.group(1).title(), m.group(2)
+    nx, vals = nx_curve(load_lengths(f))
+    curves.append((dog, asm, nx, vals))
+    summary.append({"dog":dog, "assembly":asm, "auN_Mb":auN(vals)/1e6})
+
+if not curves:
+    raise RuntimeError("No *.fa.lens files found; check your symlinks")
+
+# split dogs 50 / 50
+dogs = sorted({d for d,_,_,_ in curves})
+mid  = len(dogs)//2
+groups = [set(dogs[:mid]), set(dogs[mid:])]
+
+for gidx, gset in enumerate(groups, start=1):
+    fig, ax = plt.subplots(figsize=(7,5))
+    for dog, asm, nx, vals in curves:
+        if dog not in gset:          # skip dogs not in this half
+            continue
+        ls = "-" if asm=="primary" else "--" if asm=="hap1" else ":"
+        ax.plot(nx, vals/1e6, ls, label=f"{dog} {asm}")
+    ax.set_xlabel("x in Nx (%)")
+    ax.set_ylabel("Contig length (Mb)")
+    ax.set_title(f"Nx curves — group {gidx} / 2  (higher & right = more contiguous)")
+    ax.legend(fontsize=8, ncol=2)
+    plt.tight_layout(); plt.show()
+
+# --- auN summary table (unchanged) ---------------------------------------
+auN_df = (pd.DataFrame(summary)
+          .pivot(index="dog", columns="assembly", values="auN_Mb")
+          .reindex(columns=["primary","hap1","hap2"]))
+auN_df.round(1)
+
+
+
+```

@@ -1,0 +1,9 @@
+---
+title: "Executive Summary"
+---
+
+This report summarizes six long-read assemblies (HiFi), scaffolding with RagTag, Liftoff annotations, and a pangenome context via Panagram.
+
+::: {.callout-note}
+Rendered with Quarto as a multi-chapter “book.” Cross-links and section numbering are automatic.  
+:::

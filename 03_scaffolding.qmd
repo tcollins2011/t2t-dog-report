@@ -1,0 +1,190 @@
+---
+title: "Scaffold Assemblies (RagTag)"
+description: "Chromosome-scale continuity and gap statistics after reference scaffolding"
+format:
+  html:
+    toc: true
+    code-fold: show
+    df-print: paged
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## What this chapter shows
+
+We summarise **scaffold-level** assemblies produced with **RagTag** using *GSD v1.0* as the reference.  
+Figures mirror those in **02 Assemblies** so you can see before-versus-after gains in continuity.
+
+> Expected dog genome size ≈ **2.45 Gb** (2.4–2.5 Gb).  
+> Ideal assembly has **39–40 scaffolds** (38 autosomes + X/Y).
+
+---
+
+## Summary Table
+
+The `*.scaf.stats.tsv` files are single-line outputs from RagTag.  
+They live in `data/scaffold/` along with the `.scaf.fa.lens` length files.
+
+```{python}
+#| results: "show"
+import glob, re, sys, pathlib, pandas as pd, numpy as np
+from IPython.display import display
+import matplotlib.pyplot as plt
+
+STAT_DIR = pathlib.Path("data/scaffold")
+stat_files = glob.glob(str(STAT_DIR / "*.scaf.stats.tsv"))
+if not stat_files:
+    sys.exit(f"[ERROR] No scaffold stats found in {STAT_DIR}")
+
+PAT = re.compile(rf"{STAT_DIR}/([A-Za-z]+)_(primary|hap1|hap2)\.scaf\.stats\.tsv$")
+
+records = []
+for f in stat_files:
+    m = PAT.match(f)
+    if not m:
+        continue
+    dog, asm = m.groups()
+    with open(f) as fh:
+        kv = dict(re.findall(r"(\w+)=([\d.]+)", fh.readline()))
+    records.append(dict(
+        dog      = dog.title(),
+        assembly = asm,
+        sum      = int(kv["sum"]),
+        n50      = int(kv["n50"]),
+        Ns       = int(kv.get("Ns", 0)),
+        gaps     = int(kv.get("gaps", 0))
+    ))
+
+scaf = pd.DataFrame(records)
+scaf["assembly"]  = pd.Categorical(scaf["assembly"], ["primary","hap1","hap2"], ordered=True)
+scaf["length_Gb"] = scaf["sum"]/1e9
+scaf["N50_Mb"]    = scaf["n50"]/1e6
+scaf["Ns_pct"]    = 100*scaf["Ns"]/scaf["sum"]
+scaf = scaf.sort_values(["dog","assembly"])
+
+tbl = (scaf[["dog","assembly","length_Gb","N50_Mb","gaps","Ns_pct"]]
+       .round({"length_Gb":2,"N50_Mb":1,"Ns_pct":2})
+       .rename(columns={"length_Gb":"length (Gb)","N50_Mb":"N50 (Mb)",
+                        "gaps":"# gaps","Ns_pct":"% N"}))
+display(tbl)
+```
+## Headline continuity plots 
+```{python}
+import numpy as np, seaborn as sns
+wanted = ["primary","hap1","hap2"]
+
+# --- Bar: Scaffold N50 ------------------------------------------------
+fig, ax = plt.subplots(figsize=(8,4))
+pivot = (scaf.pivot(index="dog", columns="assembly", values="N50_Mb")
+              .reindex(sorted(scaf["dog"].unique()))
+              .reindex(columns=wanted))
+x = np.arange(len(pivot)); w = 0.27
+for i, col in enumerate(pivot.columns):
+    ax.bar(x+i*w, pivot[col], width=w, label=col)
+ax.set_xticks(x+w); ax.set_xticklabels(pivot.index)
+ax.set_ylabel("Scaffold N50 (Mb)")
+ax.set_title("Scaffold N50 by dog and haplotype")
+ax.legend(); plt.tight_layout(); plt.show()
+
+# --- Bar: Total scaffold length vs 2.45 Gb ---------------------------
+fig, ax = plt.subplots(figsize=(8,4))
+pivot = (scaf.pivot(index="dog", columns="assembly", values="length_Gb")
+              .reindex(sorted(scaf["dog"].unique()))
+              .reindex(columns=wanted))
+for i, col in enumerate(pivot.columns):
+    ax.bar(x+i*w, pivot[col], width=w, label=col)
+ax.axhline(2.45, ls="--", color="grey")
+ax.set_xticks(x+w); ax.set_xticklabels(pivot.index)
+ax.set_ylabel("Scaffolded length (Gb)")
+ax.set_title("Total scaffold length vs expected genome size (2.45 Gb)")
+ax.legend(); plt.tight_layout(); plt.show()
+
+#| label: cumulative-length
+#| results: "show"
+# ---- Cumulative-length (lens) plots for scaffolds --------------------
+import glob, re, math, pandas as pd, matplotlib.pyplot as plt
+
+def load_lens(path):
+    df = pd.read_csv(path, sep=r"\s+", header=None, names=["len"])
+    df = df.sort_values("len", ascending=False).reset_index(drop=True)
+    df["cum"] = df["len"].cumsum()
+    return df
+
+LENS_DIR   = "data/scaffold"
+lens_files = sorted(
+    glob.glob(f"{LENS_DIR}/*_primary.scaf.fa.lens") +
+    glob.glob(f"{LENS_DIR}/*_hap1.scaf.fa.lens")   +
+    glob.glob(f"{LENS_DIR}/*_hap2.scaf.fa.lens")
+)
+
+if lens_files:
+    ncols  = 3
+    nrows  = math.ceil(len(lens_files) / ncols)
+    fig, axes = plt.subplots(nrows=nrows, ncols=ncols,
+                             figsize=(12, 3 * nrows), squeeze=False)
+
+    for ax, f in zip(axes.flatten(), lens_files):
+        m = re.match(r".*/([A-Za-z0-9_-]+)_(primary|hap1|hap2)\.scaf\.fa\.lens", f)
+        if not m:        # unexpected filename
+            ax.axis("off"); ax.set_title(f"Unrecognized: {f}")
+            continue
+        dog, asm = m.group(1).title(), m.group(2)
+        df  = load_lens(f)
+        tot = df["len"].sum()
+
+        ax.plot(range(1, len(df) + 1), df["cum"] / 1e9)
+        ax.axhline(tot * 0.5 / 1e9, ls="--")        # 50 % line
+        ax.set_title(f"{dog} {asm}")
+        ax.set_xlabel("# scaffolds (sorted)")
+        ax.set_ylabel("Cumulative length (Gb)")
+
+    # Hide any empty subplots
+    for extra_ax in axes.flatten()[len(lens_files):]:
+        extra_ax.axis("off")
+
+    plt.tight_layout(); plt.show()
+else:
+    print("No *.scaf.fa.lens files found in data/scaffold/")
+```
+## Nx curves and area-under-Nx (auN)
+```{python}
+import math, numpy as np
+
+def load_lens(path):
+    arr = np.loadtxt(path, dtype=int)
+    return np.sort(arr)[::-1]
+
+def nx_curve(arr):
+    cs, tot = arr.cumsum(), arr.sum()
+    return np.array([arr[cs >= tot*x/100][0] for x in range(1,101)])
+
+LENS_DIR  = STAT_DIR
+lens_files = sorted(glob.glob(str(LENS_DIR / "*.scaf.fa.lens")))
+curves, summary = [], []
+for f in lens_files:
+    m = re.match(r".*/([A-Za-z]+)_(primary|hap1|hap2)\.scaf\.fa\.lens", f)
+    if not m: continue
+    dog, asm = m.groups(); dog = dog.title()
+    arr = load_lens(f); nx = nx_curve(arr)
+    curves.append((dog, asm, nx))
+    summary.append({"dog":dog,"assembly":asm,"auN_Mb":nx.sum()/100/1e6})
+
+# split dogs into two groups for legible plots
+dogs = sorted({d for d,_,_ in curves}); mid=len(dogs)//2
+for group, dset in enumerate([dogs[:mid], dogs[mid:]], start=1):
+    plt.figure(figsize=(7,5))
+    for dog, asm, nx in curves:
+        if dog not in dset: continue
+        ls = "-" if asm=="primary" else "--" if asm=="hap1" else ":"
+        plt.plot(range(1,101), nx/1e6, ls, label=f"{dog} {asm}")
+    plt.xlabel("x in Nx (%)"); plt.ylabel("Length (Mb)")
+    plt.title(f"Nx curves — group {group}/2 (scaffolds)")
+    plt.legend(fontsize=8, ncol=2); plt.tight_layout(); plt.show()
+
+display(pd.DataFrame(summary)
+        .pivot(index="dog", columns="assembly", values="auN_Mb")
+        .reindex(columns=wanted)
+        .round(1))
+```

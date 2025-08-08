@@ -1,0 +1,13 @@
+dog	haplotype	genes_mapped	transcripts_mapped	exons_mapped	unmapped_genes
+Appa	hap1_scaffold	41742	95599	986646	1990
+Appa	hap2_scaffold	41205	94658	979628	2441
+Molly	hap1_scaffold	41798	95816	991071	1771
+Molly	hap2_scaffold	41914	96055	994018	1748
+Noodle	hap1_scaffold	42091	96384	996118	1629
+Noodle	hap2_scaffold	40303	92693	955019	3389
+Orfhlaith	hap1_scaffold	42147	96440	995628	1610
+Orfhlaith	hap2_scaffold	42148	96348	994866	1672
+Pandan	hap1_scaffold	40585	93076	961454	3092
+Pandan	hap2_scaffold	40386	92043	942743	3411
+Zeke	hap1_scaffold	40651	92787	949897	3074
+Zeke	hap2_scaffold	41198	94538	977205	2543

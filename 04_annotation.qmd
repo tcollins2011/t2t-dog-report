@@ -1,0 +1,177 @@
+---
+title: "Genome Annotation Transfer (Liftoff)"
+description: "How well did genes lift over from GSD reference to each dog assembly?"
+format:
+  html:
+    toc: true
+    code-fold: show
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+## Summary Table
+```{python}
+
+import pandas as pd, seaborn as sns, matplotlib.pyplot as plt
+from IPython.display import display
+
+# ------------------------------------------------------------------
+# 1. read & harmonise column names / labels
+# ------------------------------------------------------------------
+lift = pd.read_csv("data/liftoff_summary.tsv", sep="\t")
+
+# Convert haplotype → assembly label we want in plots
+lift["assembly"] = (lift["haplotype"]
+                      .str.replace("_scaffold", "", regex=False)   # drop suffix
+                      .str.replace("hap", "hap",  regex=False))    # hap1_scaffold → hap1
+
+# optional: if you later add primary rows, this keeps order stable
+lift["assembly"] = pd.Categorical(lift["assembly"],
+                                  categories=["primary", "hap1", "hap2"],
+                                  ordered=True)
+
+lift["dog"] = lift["dog"].str.title()          # Appa → Appa
+
+# ------------------------------------------------------------------
+# 2. quick table
+# ------------------------------------------------------------------
+lift_tbl = (lift
+   .assign(pct_mapped = 100*lift["genes_mapped"] /
+                       (lift["genes_mapped"] + lift["unmapped_genes"]))
+   [["dog","assembly","genes_mapped","unmapped_genes","pct_mapped"]]
+   .round({"pct_mapped":1}))
+display(lift_tbl)
+
+# ------------------------------------------------------------------
+# 3. % mapped bar plot
+# ------------------------------------------------------------------
+sns.barplot(data=lift, x="dog",
+            y=lift["genes_mapped"] /
+              (lift["genes_mapped"]+lift["unmapped_genes"]),
+            hue="assembly")
+plt.ylabel("% reference genes mapped")
+plt.ylim(0,1)
+plt.title("Liftoff annotation transfer success")
+plt.tight_layout(); plt.show()
+
+
+```
+
+## Mising Genes Ontology 
+
+```{python}
+# --- 1 · unmapped-gene lists -------------------------------------------------
+import glob, re, pandas as pd, matplotlib.pyplot as plt, seaborn as sns, textwrap
+from IPython.display import Markdown, display
+from pathlib import Path
+import urllib.request, sys
+
+rx = re.compile(r"data/liftoff/([A-Za-z]+)_(hap[12])(?:_scaffold)?_unmapped\.txt")
+records = []
+for p in glob.glob("data/liftoff/*_unmapped.txt"):
+    m = rx.match(p)
+    if m:
+        with open(p) as fh:
+            records += [{"dog": m[1].title(), "assembly": m[2], "gene": g.strip()}
+                         for g in fh]
+
+unmapped = pd.DataFrame(records)
+if unmapped.empty:
+    display(Markdown("**All reference genes mapped – no enrichment to run.**"))
+    sys.exit()
+
+# --- 2 · reference mapping (gene → GO) --------------------------------------
+gene2go = pd.read_csv("data/ref_gene2go.tsv", sep="\t",
+                      names=["gene", "go"], dtype=str)
+gene2go_dict = (gene2go.groupby("gene")["go"].apply(set).to_dict())
+
+# --- 3 · GO enrichment ------------------------------------------------------
+
+import contextlib, io
+
+@contextlib.contextmanager
+def quiet_stdout():
+    """Temporarily suppress stdout (e.g. goatools chatter)."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        yield
+from goatools.obo_parser import GODag
+from goatools.go_enrichment import GOEnrichmentStudy
+
+obo = Path("data/go/go-basic.obo")
+if not obo.exists():
+    obo.parent.mkdir(parents=True, exist_ok=True)
+    urllib.request.urlretrieve(
+        "https://current.geneontology.org/ontology/go-basic.obo", obo
+    )
+
+with quiet_stdout():
+    go_dag = GODag(str(obo))
+
+rows = []
+for (dog, asm), df in unmapped.groupby(["dog", "assembly"]):
+    study = set(df["gene"])
+    pop   = set(gene2go["gene"])
+    with quiet_stdout():
+        goea  = GOEnrichmentStudy(pop, gene2go_dict, go_dag,
+                                methods=["fdr_bh"], alpha=0.05, prt=None)
+        sig   = [r for r in goea.run_study(study) if r.p_fdr_bh < 0.05]
+        for r in sig[:10]:                       # keep top 10 per set
+            rows.append({"dog": dog, "assembly": asm,
+                        "GO": r.GO, "desc": r.name,
+                        "pct_study": 100*r.ratio_in_study[0]/r.ratio_in_study[1],
+                        "p_FDR": r.p_fdr_bh})
+
+enrich = pd.DataFrame(rows)
+
+# --- 4a · tabbed paged table of unmapped genes ------------------------------
+md = ["::: {.panel-tabset}\n"]
+for dog in sorted(unmapped["dog"].unique()):
+    md += [f"#### {dog}\n"]
+    tbl = (unmapped.loc[unmapped["dog"] == dog]
+           .pivot_table(index="gene", columns="assembly", aggfunc="size",
+                        fill_value=0)
+           .replace({0: "✓", 1: "✗"})
+           .sort_index()
+           .head(50))                       # first 50 genes
+    md += [tbl.to_markdown(), ""]
+md += [":::"]
+display(Markdown("#### First 50 Genes missing in one or both haplotypes"))
+display(Markdown("\n".join(md)))
+
+# --- 4b · GO-term × (dog-hap) presence table --------------------------------
+if not enrich.empty:
+    enrich["set"] = enrich["dog"] + "-" + enrich["assembly"]
+    heat = (enrich.pivot_table(index="desc", columns="set",
+                               aggfunc="size", fill_value=0)
+                  .replace({0: "", 1: "✗"})
+                  .sort_index())
+    display(Markdown("#### Enriched GO terms among unmapped genes across all dogs / haplotypes"))
+    display(heat)                        
+
+# --- 4c · bar-plots of top terms -------------------------------------------
+if not enrich.empty:
+    enrich["desc_wrapped"] = enrich["desc"].apply(
+        lambda s: "\n".join(textwrap.wrap(s, 35))
+    )
+    top = (enrich.sort_values("p_FDR")
+                 .groupby(["dog", "assembly"])
+                 .head(5))               # top 5 per dog × hap
+
+    g = sns.catplot(data=top,
+                    x="pct_study", y="desc_wrapped",
+                    hue="assembly", col="dog",
+                    col_wrap=3, sharey=False,
+                    height=4.8, aspect=1.2,
+                    palette="Set2", kind="bar")
+
+    g.set_titles("{col_name}")
+    g.set_xlabels("% of unmapped genes")
+    g.set_ylabels("")
+    g.fig.subplots_adjust(top=0.9)
+    g.fig.suptitle("Top enriched 5 GO terms among unmapped genes",
+                   fontsize=14, weight="bold")
+    plt.show()
+
+```

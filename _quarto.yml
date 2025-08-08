@@ -1,0 +1,28 @@
+project:
+  type: book
+  output-dir: _site
+  preview:
+    port: 8050
+    host: 0.0.0.0
+    browser: false
+
+book:
+  title: "T2T Dog Genomes – 2025"
+  chapters:
+    - index.qmd
+    - 01_methods.qmd
+    - 02_assemblies.qmd
+    - 03_scaffolding.qmd
+    - 04_annotation.qmd
+    # - 05_panagram.qmd
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    number-sections: true
+
+execute:
+  freeze: auto   
+  warning: false
+  message: false

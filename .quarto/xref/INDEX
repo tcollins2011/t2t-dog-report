@@ -1,0 +1,27 @@
+{
+  "index.qmd": {
+    "index.html": "46d8c695",
+    "full_report.html": "fd504307",
+    "T2T_Dog_Genomes_2025.html": "47c6a92a"
+  },
+  "01_methods.qmd": {
+    "01_methods.html": "f6161f59",
+    "full_report.html": "91e5c0d6",
+    "T2T_Dog_Genomes_2025.html": "d3d8abda"
+  },
+  "02_assemblies.qmd": {
+    "02_assemblies.html": "043c20a1",
+    "full_report.html": "e86b217e",
+    "T2T_Dog_Genomes_2025.html": "4212fc51"
+  },
+  "04_annotation.qmd": {
+    "04_annotation.html": "33e74fc7",
+    "full_report.html": "762cced8",
+    "T2T_Dog_Genomes_2025.html": "54049f08"
+  },
+  "03_scaffolding.qmd": {
+    "03_scaffolding.html": "fd8bdf0b",
+    "full_report.html": "e04e1c60",
+    "T2T_Dog_Genomes_2025.html": "465e4d9d"
+  }
+}

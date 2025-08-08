@@ -1,0 +1,10 @@
+---
+title: "Methods & Inputs"
+---
+
+- **Assemblies:** hifiasm (HiFi), then RagTag scaffolding vs UU_Cfam_GSD_1.0_ROSY.
+- **Annotation:** Liftoff from UU_Cfam_GSD_1.0_ROSY RefSeq/Ensembl-format GTF.
+- **Pangenome:** Panagram index (k=31), anchors, distances.
+
+Data live under `/data/mschatz1/t2t-dogs/2025.07.17.Zeke/HiFi/${DOG}/...`  
+Report reads precomputed TSVs/GFF3s (fast, reproducible renders using Quarto’s *freeze*).
