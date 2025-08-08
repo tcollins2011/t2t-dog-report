@@ -1,0 +1,26 @@
+name: Quarto Publish to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:      # allow manual reruns from UI
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # needed by peaceiris action
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: quarto-dev/quarto-actions/setup@v2
+        # Installs Quarto + Pandoc
+
+      - name: Render book
+        run: quarto render           # outputs to _site/ (see _quarto.yml)
+
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          publish_dir: _site         # folder to push
+          publish_branch: gh-pages   # branch to create/update
